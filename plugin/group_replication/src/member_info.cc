@@ -35,7 +35,7 @@ using std::string;
 using std::vector;
 
 Group_member_info::Group_member_info(
-    const char *hostname_arg, uint port_arg, const char *uuid_arg,
+    const char *hostname_arg, const char *group_name_arg, uint port_arg, const char *uuid_arg,
     int write_set_extraction_algorithm_arg,
     const std::string &gcs_member_id_arg,
     Group_member_info::Group_member_status status_arg,
@@ -47,6 +47,7 @@ Group_member_info::Group_member_info(
     const char *recovery_endpoints_arg, PSI_mutex_key psi_mutex_key_arg)
     : Plugin_gcs_message(CT_MEMBER_INFO_MESSAGE),
       hostname(hostname_arg),
+      group_name(group_name_arg),
       port(port_arg),
       uuid(uuid_arg),
       status(status_arg),
@@ -82,6 +83,7 @@ Group_member_info::Group_member_info(
 Group_member_info::Group_member_info(Group_member_info &other)
     : Plugin_gcs_message(CT_MEMBER_INFO_MESSAGE),
       hostname(other.get_hostname()),
+      group_name(other.get_group_name()),
       port(other.get_port()),
       uuid(other.get_uuid()),
       status(other.get_recovery_status()),
@@ -137,7 +139,7 @@ Group_member_info::~Group_member_info() {
 }
 
 void Group_member_info::update(
-    const char *hostname_arg, uint port_arg, const char *uuid_arg,
+    const char *hostname_arg, const char *group_name_arg, uint port_arg, const char *uuid_arg,
     int write_set_extraction_algorithm_arg,
     const std::string &gcs_member_id_arg,
     Group_member_info::Group_member_status status_arg,
@@ -150,6 +152,7 @@ void Group_member_info::update(
   MUTEX_LOCK(lock, &update_lock);
 
   hostname.assign(hostname_arg);
+  group_name.assign(group_name_arg);
   port = port_arg;
   uuid.assign(uuid_arg);
   status = status_arg;
@@ -187,7 +190,7 @@ void Group_member_info::update(Group_member_info &other) {
   Member_version other_member_version = other.get_member_version();
 
   update(
-      other.get_hostname().c_str(), other.get_port(), other.get_uuid().c_str(),
+      other.get_hostname().c_str(), other.get_group_name().c_str(), other.get_port(), other.get_uuid().c_str(),
       other.get_write_set_extraction_algorithm(),
       other.get_gcs_member_id().get_member_id(), other.get_recovery_status(),
       other_member_version, other.get_gtid_assignment_block_size(),
@@ -210,6 +213,8 @@ void Group_member_info::encode_payload(
 
   encode_payload_item_string(buffer, PIT_HOSTNAME, hostname.c_str(),
                              hostname.length());
+  
+  encode_payload_item_string(buffer, PIT_UUID, group_name.c_str(), group_name.length());
 
   uint16 port_aux = (uint16)port;
   encode_payload_item_int2(buffer, PIT_PORT, port_aux);
@@ -303,6 +308,9 @@ void Group_member_info::decode_payload(const unsigned char *buffer,
   MUTEX_LOCK(lock, &update_lock);
 
   decode_payload_item_string(&slider, &payload_item_type, &hostname,
+                             &payload_item_length);
+  
+  decode_payload_item_string(&slider, &payload_item_type, &group_name,
                              &payload_item_length);
 
   uint16 port_aux = 0;
@@ -439,6 +447,11 @@ void Group_member_info::decode_payload(const unsigned char *buffer,
 string Group_member_info::get_hostname() {
   MUTEX_LOCK(lock, &update_lock);
   return hostname;
+}
+
+string Group_member_info::get_group_name() {
+  MUTEX_LOCK(lock, &update_lock);
+  return group_name;
 }
 
 uint Group_member_info::get_port() {
@@ -745,11 +758,87 @@ bool Group_member_info::has_lower_uuid(Group_member_info *other) {
 
 bool Group_member_info::has_greater_weight(Group_member_info *other) {
   MUTEX_LOCK(lock, &update_lock);
-  if (member_weight > other->get_member_weight()) return true;
 
-  if (member_weight == other->get_member_weight())
-    return has_lower_uuid_internal(other);
+  /* 
+    executed_gtid_set may contain multiple groups, and only the maximum 
+    gtid belonging to the current group needs to be compared.
+  */
 
+  /*
+    format of executed_set: [group_name:gtid_set,group_name:gtid_set], eg., 
+      [aaaaa:1-4:5:6,
+      bbbbb:1-10:11:12] 
+    Split is a lambda function to split executed_set to map: group_name->gtid_set,eg.,
+      aaaaa->1-4:5:6
+      bbbbb->1-10:11:12
+  */
+  auto Split = [](const std::string &str, std::string sep) -> std::map<std::string, std::string>{
+    std::map<std::string, std::string> ret;
+    if (str.empty()) {
+        return ret;
+    }
+
+    std::string temp;
+    std::string::size_type begin = str.find_first_not_of(sep);
+    std::string::size_type pos = 0;
+
+    while (begin != std::string::npos) {
+        pos = str.find(sep, begin);
+        if (pos != std::string::npos) {
+            temp = str.substr(begin, pos - begin);
+            begin = pos + sep.length();
+        } else {
+            temp = str.substr(begin);
+            begin = pos;
+        }
+
+        if (!temp.empty()) {
+            ret[temp.substr(0,temp.find(":"))] = temp.substr(temp.rfind(":")+1);
+            temp.clear();
+        }
+    }
+    return ret;
+  };
+
+  std::string str = executed_gtid_set;
+  str.erase(std::remove(str.begin(), str.end(), '\n'), str.end());  // erase '\n' in string executed_gtid_set
+  map<std::string, std::string> gtidset_map_this = Split(str, ","); // split gitd_set with ","
+  std::string gitdset_this = gtidset_map_this[group_name];          // gtidset in current group
+
+  str = other->get_gtid_executed();
+  str.erase(std::remove(str.begin(), str.end(), '\n'), str.end());
+  map<std::string, std::string> gtidset_map_other = Split(str, ",");
+  std::string gitdset_other = gtidset_map_other[group_name];
+
+
+  long long int n1 = 0;
+  long long int n2 = 0;
+
+  // find the maximum gtid of this
+  if(!gitdset_this.empty()){
+    size_t this_max_gtid_i = gitdset_this.size() - 1;
+    for(;isdigit(gitdset_this[this_max_gtid_i]);--this_max_gtid_i);
+    n1 = (this_max_gtid_i == gitdset_this.size() - 1) ? 0 : stoll(gitdset_this.substr(this_max_gtid_i + 1));
+  }
+
+  // find the maximum gtid of other
+  if(!gitdset_other.empty()){
+    size_t other_max_gtid_i = gitdset_other.size() - 1;
+    for(;isdigit(gitdset_other[other_max_gtid_i]);--other_max_gtid_i);
+    n2 = (other_max_gtid_i == gitdset_other.size() - 1) ? 0 : stoll(gitdset_other.substr(other_max_gtid_i + 1));
+  }
+
+  // fisrt compare the maximum gitd, then member_weight, then uuid
+
+  if (n1 > n2) return true;
+  
+  if(n1 == n2){
+    if (member_weight > other->get_member_weight()) return true;
+
+    if (member_weight == other->get_member_weight())
+      return has_lower_uuid_internal(other);
+  }
+  
   return false;
 }
 

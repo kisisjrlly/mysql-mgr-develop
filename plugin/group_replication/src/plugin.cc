@@ -790,7 +790,7 @@ int configure_group_member_manager() {
   // Initialize or update local_member_info.
   if (local_member_info != nullptr) {
     local_member_info->update(
-        hostname, port, uuid, lv.write_set_extraction_algorithm,
+        hostname, ov.group_name_var, port, uuid, lv.write_set_extraction_algorithm,
         gcs_local_member_identifier, Group_member_info::MEMBER_OFFLINE,
         local_member_plugin_version, ov.gtid_assignment_block_size_var,
         Group_member_info::MEMBER_ROLE_SECONDARY, ov.single_primary_mode_var,
@@ -799,7 +799,7 @@ int configure_group_member_manager() {
         ov.advertise_recovery_endpoints_var);
   } else {
     local_member_info = new Group_member_info(
-        hostname, port, uuid, lv.write_set_extraction_algorithm,
+        hostname, ov.group_name_var, port, uuid, lv.write_set_extraction_algorithm,
         gcs_local_member_identifier, Group_member_info::MEMBER_OFFLINE,
         local_member_plugin_version, ov.gtid_assignment_block_size_var,
         Group_member_info::MEMBER_ROLE_SECONDARY, ov.single_primary_mode_var,

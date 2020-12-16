@@ -175,6 +175,7 @@ class Group_member_info : public Plugin_gcs_message {
     Group_member_info constructor
 
     @param[in] hostname_arg                           member hostname
+    @param[in] group_name_arg                         member groupname
     @param[in] port_arg                               member port
     @param[in] uuid_arg                               member uuid
     @param[in] write_set_extraction_algorithm         write set extraction
@@ -197,7 +198,7 @@ class Group_member_info : public Plugin_gcs_message {
     @param[in] recovery_endpoints_arg                 recovery endpoints
     advertised
    */
-  Group_member_info(const char *hostname_arg, uint port_arg,
+  Group_member_info(const char *hostname_arg, const char *group_name_arg, uint port_arg,
                     const char *uuid_arg, int write_set_extraction_algorithm,
                     const std::string &gcs_member_id_arg,
                     Group_member_info::Group_member_status status_arg,
@@ -239,6 +240,7 @@ class Group_member_info : public Plugin_gcs_message {
     Update Group_member_info.
 
     @param[in] hostname_arg                           member hostname
+    @param[in] group_name_arg                         member groupname
     @param[in] port_arg                               member port
     @param[in] uuid_arg                               member uuid
     @param[in] write_set_extraction_algorithm         write set extraction
@@ -260,7 +262,7 @@ class Group_member_info : public Plugin_gcs_message {
     @param[in] recovery_endpoints_arg                 recovery endpoints
     advertised
    */
-  void update(const char *hostname_arg, uint port_arg, const char *uuid_arg,
+  void update(const char *hostname_arg, const char *group_name_arg, uint port_arg, const char *uuid_arg,
               int write_set_extraction_algorithm,
               const std::string &gcs_member_id_arg,
               Group_member_info::Group_member_status status_arg,
@@ -284,6 +286,11 @@ class Group_member_info : public Plugin_gcs_message {
     @return the member hostname
    */
   std::string get_hostname();
+
+  /**
+    @return the member groupname
+   */
+  std::string get_group_name();
 
   /**
     @return the member port
@@ -565,6 +572,7 @@ class Group_member_info : public Plugin_gcs_message {
 
   mysql_mutex_t update_lock;
   std::string hostname;
+  std::string group_name;
   uint port;
   std::string uuid;
   Group_member_status status;
