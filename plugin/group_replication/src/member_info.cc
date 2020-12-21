@@ -30,6 +30,8 @@
 
 #include "plugin/group_replication/include/plugin_constants.h"
 
+#include "sql/rpl_gtid.h"
+
 using std::map;
 using std::string;
 using std::vector;
@@ -43,7 +45,7 @@ Group_member_info::Group_member_info(
     ulonglong gtid_assignment_block_size_arg,
     Group_member_info::Group_member_role role_arg, bool in_single_primary_mode,
     bool has_enforces_update_everywhere_checks, uint member_weight_arg,
-    uint lower_case_table_names_arg, bool default_table_encryption_arg,
+    uint lower_case_table_names_arg, bool default_table_encryption_arg, bool primary_election_self_adaption_arg,
     const char *recovery_endpoints_arg, PSI_mutex_key psi_mutex_key_arg)
     : Plugin_gcs_message(CT_MEMBER_INFO_MESSAGE),
       hostname(hostname_arg),
@@ -59,6 +61,7 @@ Group_member_info::Group_member_info(
       member_weight(member_weight_arg),
       lower_case_table_names(lower_case_table_names_arg),
       default_table_encryption(default_table_encryption_arg),
+      primary_election_self_adaption(primary_election_self_adaption_arg),
       group_action_running(false),
       primary_election_running(false),
       recovery_endpoints(recovery_endpoints_arg ? recovery_endpoints_arg
@@ -98,6 +101,7 @@ Group_member_info::Group_member_info(Group_member_info &other)
       member_weight(other.get_member_weight()),
       lower_case_table_names(other.get_lower_case_table_names()),
       default_table_encryption(other.get_default_table_encryption()),
+      primary_election_self_adaption(other.is_primary_election_self_adaption()),
       group_action_running(other.is_group_action_running()),
       primary_election_running(other.is_primary_election_running()),
       recovery_endpoints(other.get_recovery_endpoints()),
@@ -146,6 +150,7 @@ void Group_member_info::update(
     Group_member_info::Group_member_role role_arg, bool in_single_primary_mode,
     bool has_enforces_update_everywhere_checks, uint member_weight_arg,
     uint lower_case_table_names_arg, bool default_table_encryption_arg,
+    bool primary_election_self_adaption_arg,
     const char *recovery_endpoints_arg) {
   MUTEX_LOCK(lock, &update_lock);
 
@@ -161,6 +166,7 @@ void Group_member_info::update(
   member_weight = member_weight_arg;
   lower_case_table_names = lower_case_table_names_arg;
   default_table_encryption = default_table_encryption_arg;
+  primary_election_self_adaption = primary_election_self_adaption_arg;
   group_action_running = false;
   primary_election_running = false;
 
@@ -196,6 +202,7 @@ void Group_member_info::update(Group_member_info &other) {
       other.get_configuration_flags() | CNF_ENFORCE_UPDATE_EVERYWHERE_CHECKS_F,
       other.get_member_weight(), other.get_lower_case_table_names(),
       other.get_default_table_encryption(),
+      other.is_primary_election_self_adaption(),
       other.get_recovery_endpoints().c_str());
 }
 
@@ -270,6 +277,11 @@ void Group_member_info::encode_payload(
   /*
     MySQL 8.0+ payloads
   */
+
+  //new, to encode primary_election_self_adaption in Group_member_info
+  char primary_election_self_adaption_aux = primary_election_self_adaption ? '1' : '0';
+  encode_payload_item_char(buffer, PIT_PRIMARY_ELECTION_SELF_ADAPTION,
+                           primary_election_self_adaption_aux);
 
   char is_action_running_aux = group_action_running ? '1' : '0';
   encode_payload_item_char(buffer, PIT_GROUP_ACTION_RUNNING,
@@ -361,6 +373,17 @@ void Group_member_info::decode_payload(const unsigned char *buffer,
                                         &payload_item_length);
 
     switch (payload_item_type) {
+
+      //new, to decode primary_election_self_adaption in Group_member_info
+      case PIT_PRIMARY_ELECTION_SELF_ADAPTION:
+        if (slider + payload_item_length <= end) {
+          unsigned char primary_election_self_adaption_aux = *slider;
+          slider += payload_item_length;
+          primary_election_self_adaption =
+              (primary_election_self_adaption_aux == '1') ? true : false;
+        }
+        break;
+      
       case PIT_CONFLICT_DETECTION_ENABLE:
         if (slider + payload_item_length <= end) {
           unsigned char conflict_detection_enable_aux = *slider;
@@ -560,6 +583,10 @@ void Group_member_info::set_enforces_update_everywhere_checks_flag(
   }
 }
 
+bool Group_member_info::is_primary_election_self_adaption(){
+  return primary_election_self_adaption;
+}
+
 bool Group_member_info::in_primary_mode_internal() {
   return configuration_flags & CNF_SINGLE_PRIMARY_MODE_F;
 }
@@ -727,6 +754,11 @@ bool Group_member_info::comparator_group_member_weight(Group_member_info *m1,
   return m1->has_greater_weight(m2);
 }
 
+bool Group_member_info::comparator_group_member_executed_gtid(Group_member_info *m1,
+                                                       Group_member_info *m2) {
+  return m1->has_greater_executed_gtid(m2);
+}
+
 bool Group_member_info::has_greater_version(Group_member_info *other) {
   MUTEX_LOCK(lock, &update_lock);
   if (*member_version > *(other->member_version)) return true;
@@ -745,11 +777,39 @@ bool Group_member_info::has_lower_uuid(Group_member_info *other) {
 
 bool Group_member_info::has_greater_weight(Group_member_info *other) {
   MUTEX_LOCK(lock, &update_lock);
+    if (member_weight > other->get_member_weight()) return true;
+
+    if (member_weight == other->get_member_weight())
+      return has_lower_uuid_internal(other);
+
+  return false;
+}
+
+bool Group_member_info::has_greater_executed_gtid(Group_member_info *other){
+  MUTEX_LOCK(lock, &update_lock);
+
+  Sid_map this_sid_map(nullptr);
+  Gtid_set this_Gtid_set(&this_sid_map, nullptr);
+
+  Sid_map other_sid_map(nullptr);
+  Gtid_set other_Gtid_set(&other_sid_map, nullptr);
+
+  this_Gtid_set.add_gtid_text(executed_gtid_set.c_str());
+  other_Gtid_set.add_gtid_text(other->get_gtid_executed().c_str());
+  
+  // gtid in this member is greater than the other
+  if(other_Gtid_set.is_subset_not_equals(&this_Gtid_set)) return true;
+
+  // gtid in this member is smaller than the other
+  if(this_Gtid_set.is_subset_not_equals(&other_Gtid_set)) return false;
+
+  // when we get here, gtid is same between this member and the other,
+  // nextly use origion method, i.e,  method in comparator_group_member_weight()
   if (member_weight > other->get_member_weight()) return true;
 
   if (member_weight == other->get_member_weight())
     return has_lower_uuid_internal(other);
-
+    
   return false;
 }
 

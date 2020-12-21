@@ -173,10 +173,12 @@ class Primary_election_handler {
   @param all_members_info    the vector with members info
   @param lowest_version_end  first iterator position where members version
                              increases.
+  @param primary_election_self_adaption  use gtid to pick priamry or not
 */
 void sort_members_for_election(
     std::vector<Group_member_info *> *all_members_info,
-    std::vector<Group_member_info *>::iterator lowest_version_end);
+    std::vector<Group_member_info *>::iterator lowest_version_end,
+    bool primary_election_self_adaption);
 
 /**
   Sort members based on member_version and get first iterator position
