@@ -1613,17 +1613,18 @@ int Plugin_gcs_events_handler::compare_member_option_compatibility() const {
     }
 
     // joiner must has the same primary election method as members in current group
-    // if not, joiner will be rejected 
-    if (local_member_info->is_primary_election_self_adaption() !=
-        (*all_members_it)->is_primary_election_self_adaption()) {
-      result = 1;
-      LogPluginErr(ERROR_LEVEL,
-                   ER_GRP_RPL_DEFAULT_PRIMARY_ELECTION_SELF_ADAPTION_DIFF_FROM_GRP,
-                   local_member_info->is_primary_election_self_adaption(),
-                   (*all_members_it)->is_primary_election_self_adaption());
-      goto cleaning;
+    // if not, joiner will be rejected. Only in single primary mode this detection happens. 
+    if(local_member_info->in_primary_mode()){
+      if (local_member_info->is_primary_election_self_adaption() !=
+          (*all_members_it)->is_primary_election_self_adaption()) {
+        result = 1;
+        LogPluginErr(ERROR_LEVEL,
+                    ER_GRP_RPL_DEFAULT_PRIMARY_ELECTION_SELF_ADAPTION_DIFF_FROM_GRP,
+                     local_member_info->is_primary_election_self_adaption(),
+                    (*all_members_it)->is_primary_election_self_adaption());
+        goto cleaning;
+      }
     }
-
   }
 
 cleaning:
