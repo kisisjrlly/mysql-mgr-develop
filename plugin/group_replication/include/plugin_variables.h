@@ -219,7 +219,7 @@ struct plugin_options_variables {
 #define MIN_MESSAGE_CACHE_SIZE 134217728
 #define MAX_MESSAGE_CACHE_SIZE ULONG_MAX
   ulong message_cache_size_var;
-
+  bool primary_election_self_adaption_var;
   bool single_primary_mode_var;
   bool enforce_update_everywhere_checks_var;
 

@@ -796,6 +796,7 @@ int configure_group_member_manager() {
         Group_member_info::MEMBER_ROLE_SECONDARY, ov.single_primary_mode_var,
         ov.enforce_update_everywhere_checks_var, ov.member_weight_var,
         lv.gr_lower_case_table_names, lv.gr_default_table_encryption,
+        ov.primary_election_self_adaption_var,
         ov.advertise_recovery_endpoints_var);
   } else {
     local_member_info = new Group_member_info(
@@ -805,6 +806,7 @@ int configure_group_member_manager() {
         Group_member_info::MEMBER_ROLE_SECONDARY, ov.single_primary_mode_var,
         ov.enforce_update_everywhere_checks_var, ov.member_weight_var,
         lv.gr_lower_case_table_names, lv.gr_default_table_encryption,
+        ov.primary_election_self_adaption_var,
         ov.advertise_recovery_endpoints_var);
   }
 
@@ -3231,6 +3233,31 @@ static int check_sysvar_bool(MYSQL_THD, SYS_VAR *, void *save,
   return 0;
 }
 
+static int check_primary_election_self_adaption(MYSQL_THD, SYS_VAR *, void *save,
+                            struct st_mysql_value *value) {
+  DBUG_TRACE;
+
+  bool primary_election_self_adaption_val;
+
+  if (!get_bool_value_using_type_lib(value, primary_election_self_adaption_val)) return 1;
+
+  if (plugin_running_mutex_trylock()) return 1;
+
+  if (plugin_is_group_replication_running()) {
+    mysql_mutex_unlock(&lv.plugin_running_mutex);
+    my_message(ER_GROUP_REPLICATION_RUNNING,
+               "The group_replication_primary_election_self_adaption cannot be changed when Group "
+               "Replication is running",
+               MYF(0));
+    return 1;
+  }
+
+  *(bool *)save = primary_election_self_adaption_val;
+
+  mysql_mutex_unlock(&lv.plugin_running_mutex);
+  return 0;
+}
+
 static int check_single_primary_mode(MYSQL_THD, SYS_VAR *, void *save,
                                      struct st_mysql_value *value) {
   DBUG_TRACE;
@@ -3692,7 +3719,6 @@ static void update_clone_threshold(MYSQL_THD, SYS_VAR *, void *var_ptr,
 }
 
 // Base plugin variables
-
 static MYSQL_SYSVAR_STR(group_name,        /* name */
                         ov.group_name_var, /* var */
                         /* optional var | malloc string | no set default */
@@ -4155,9 +4181,21 @@ static MYSQL_SYSVAR_STR(
     "AUTOMATIC");                     /* default*/
 
 static MYSQL_SYSVAR_BOOL(
+    primary_election_self_adaption,        /* name */
+    ov.primary_election_self_adaption_var, /* var */
+    PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_NODEFAULT |  
+        PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var | no set default */
+    "Instructs the group to elect primary according to transaction execution speed," 
+    "especially the max value of gtid executed set. Default: FALSE," 
+    "that is member_weight way will be adopted.",
+    check_primary_election_self_adaption, /* check func*/
+    nullptr,                   /* update func*/
+    false);                     /* default*/
+
+static MYSQL_SYSVAR_BOOL(
     single_primary_mode,        /* name */
     ov.single_primary_mode_var, /* var */
-    PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_NODEFAULT |
+    PLUGIN_VAR_OPCMDARG | PLUGIN_VAR_NODEFAULT |  
         PLUGIN_VAR_PERSIST_AS_READ_ONLY, /* optional var | no set default */
     "Instructs the group to automatically pick a single server to be "
     "the one that handles read/write workload. This server is the "
@@ -4528,6 +4566,7 @@ static SYS_VAR *group_replication_system_vars[] = {
     MYSQL_SYSVAR(ssl_mode),
     MYSQL_SYSVAR(ip_whitelist),
     MYSQL_SYSVAR(ip_allowlist),
+    MYSQL_SYSVAR(primary_election_self_adaption),
     MYSQL_SYSVAR(single_primary_mode),
     MYSQL_SYSVAR(enforce_update_everywhere_checks),
     MYSQL_SYSVAR(flow_control_mode),

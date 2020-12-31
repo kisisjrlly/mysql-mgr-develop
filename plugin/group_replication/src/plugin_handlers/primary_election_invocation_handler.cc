@@ -355,7 +355,7 @@ bool Primary_election_handler::pick_primary_member(
   /*  Sort lower version members based on member weight if member version
       is greater than equal to PRIMARY_ELECTION_MEMBER_WEIGHT_VERSION or uuid.
    */
-  sort_members_for_election(all_members_info, lowest_version_end);
+  sort_members_for_election(all_members_info, lowest_version_end, local_member_info->is_primary_election_self_adaption());
 
   /*
    1. Iterate over the list of all members and check if there is a primary
@@ -485,17 +485,27 @@ sort_and_get_lowest_version_member_position(
 
 void sort_members_for_election(
     std::vector<Group_member_info *> *all_members_info,
-    std::vector<Group_member_info *>::iterator lowest_version_end) {
+    std::vector<Group_member_info *>::iterator lowest_version_end,
+    bool primary_election_self_adaption) {
   Group_member_info *first_member = *(all_members_info->begin());
   Member_version lowest_version = first_member->get_member_version();
 
   // sort only lower version members as they only will be needed to pick leader
-  if (lowest_version >= PRIMARY_ELECTION_MEMBER_WEIGHT_VERSION)
-    std::sort(all_members_info->begin(), lowest_version_end,
+  if (lowest_version >= PRIMARY_ELECTION_MEMBER_WEIGHT_VERSION) {
+
+    // when primary_election_self_adaption is true, pick primary by executed gitd, otherwise by origion method 
+    if(primary_election_self_adaption)
+      std::sort(all_members_info->begin(), lowest_version_end,
+              Group_member_info::comparator_group_member_executed_gtid);
+    else
+      std::sort(all_members_info->begin(), lowest_version_end,
               Group_member_info::comparator_group_member_weight);
-  else
+    
+  }else {
     std::sort(all_members_info->begin(), lowest_version_end,
               Group_member_info::comparator_group_member_uuid);
+  }
+    
 }
 
 void Primary_election_handler::notify_election_running() {

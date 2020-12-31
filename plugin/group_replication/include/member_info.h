@@ -141,8 +141,11 @@ class Group_member_info : public Plugin_gcs_message {
     // Length of the payload item: variable
     PIT_RECOVERY_ENDPOINTS = 20,
 
+    // Length of the payload item: 1 bytes
+    PIT_PRIMARY_ELECTION_SELF_ADAPTION = 21,
+
     // No valid type codes can appear after this one.
-    PIT_MAX = 21
+    PIT_MAX = 22
   };
 
   /*
@@ -194,6 +197,7 @@ class Group_member_info : public Plugin_gcs_message {
     @param[in] lower_case_table_names_arg             lower case table names
     @param[in] psi_mutex_key_arg                      mutex key
     @param[in] default_table_encryption_arg           default_table_encryption
+    @param[in] primary_election_self_adaption_arg     is primary election self adaption or not
     @param[in] recovery_endpoints_arg                 recovery endpoints
     advertised
    */
@@ -208,6 +212,7 @@ class Group_member_info : public Plugin_gcs_message {
                     bool has_enforces_update_everywhere_checks,
                     uint member_weight_arg, uint lower_case_table_names_arg,
                     bool default_table_encryption_arg,
+                    bool primary_election_self_adaption_arg,
                     const char *recovery_endpoints_arg,
                     PSI_mutex_key psi_mutex_key_arg =
                         key_GR_LOCK_group_member_info_update_lock);
@@ -257,6 +262,7 @@ class Group_member_info : public Plugin_gcs_message {
     @param[in] member_weight_arg                      member_weight
     @param[in] lower_case_table_names_arg             lower case table names
     @param[in] default_table_encryption_arg           default table encryption
+    @param[in] primary_election_self_adaption_arg     is primary election self adaption or not
     @param[in] recovery_endpoints_arg                 recovery endpoints
     advertised
    */
@@ -271,6 +277,7 @@ class Group_member_info : public Plugin_gcs_message {
               bool has_enforces_update_everywhere_checks,
               uint member_weight_arg, uint lower_case_table_names_arg,
               bool default_table_encryption_arg,
+              bool primary_election_self_adaption_arg, 
               const char *recovery_endpoints_arg);
 
   /**
@@ -376,6 +383,12 @@ class Group_member_info : public Plugin_gcs_message {
 
   /**
     @return the member state of system variable
+            primary_election_self_adaption
+  */
+  bool is_primary_election_self_adaption();
+
+  /**
+    @return the member state of system variable
             group_replication_single_primary_mode
   */
   bool in_primary_mode();
@@ -448,6 +461,15 @@ class Group_member_info : public Plugin_gcs_message {
                                              Group_member_info *m2);
 
   /**
+    @return Compare two members using executed_gtid
+    @note if the executed_gtid is same, the member is sorted 
+          first by member weight,then in lexicographical order using its uuid.
+   */
+  static bool comparator_group_member_executed_gtid(Group_member_info *m1,
+                                             Group_member_info *m2);
+
+
+  /**
     Return true if member version is higher than other member version
    */
   bool has_greater_version(Group_member_info *other);
@@ -461,6 +483,11 @@ class Group_member_info : public Plugin_gcs_message {
     Return true if member weight is higher than other member weight
    */
   bool has_greater_weight(Group_member_info *other);
+
+   /**
+    Return true if executed gtid is higher than other executed gtid
+   */
+  bool has_greater_executed_gtid(Group_member_info *other);
 
   /**
     Redefinition of operate ==, which operate upon the uuid
@@ -582,6 +609,7 @@ class Group_member_info : public Plugin_gcs_message {
   uint member_weight;
   uint lower_case_table_names;
   bool default_table_encryption;
+  bool primary_election_self_adaption;
   bool group_action_running;
   bool primary_election_running;
   std::string recovery_endpoints;
